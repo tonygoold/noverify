@@ -1549,6 +1549,10 @@ func (b *BlockWalker) handleSwitch(s *stmt.Switch) bool {
 			haveDefault = true
 		}
 
+		if c, ok := c.(*stmt.Case); ok {
+			c.Cond.Walk(b)
+		}
+
 		// allow empty case body without "break;"
 		// nothing new can be defined here so we just skip it
 		if len(list) == 0 {
