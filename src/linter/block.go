@@ -90,6 +90,10 @@ type BlockWalker struct {
 	// having for loop outside of that switch.
 	insideLoop bool
 
+	// insideArgumentList is true if the nodes being evaluated are inside the
+	// argument list of a function/method call
+	insideArgumentList bool
+
 	// block flags
 	exitFlags         int // if block always breaks code flow then there will be exitFlags
 	containsExitFlags int // if block sometimes breaks code flow then there will be containsExitFlags
@@ -161,6 +165,7 @@ func (b *BlockWalker) copy() *BlockWalker {
 		r:                    b.r,
 		innermostLoop:        b.innermostLoop,
 		insideLoop:           b.insideLoop,
+		insideArgumentList:   b.insideArgumentList,
 		unusedVars:           b.unusedVars,
 		nonLocalVars:         b.nonLocalVars,
 		ignoreFunctionBodies: b.ignoreFunctionBodies,
@@ -438,7 +443,9 @@ func (b *BlockWalker) replaceVar(v *expr.Variable, typ *meta.TypesMap, reason st
 
 	// Writes to variables that are done in a loop should not count as unused variables
 	// because they can be read on the next iteration (ideally we should check for that too :))
-	if !b.insideLoop {
+	// Assignments in argument lists also should not count as unused, since
+	// that is a common way to indicate what a literal argument means
+	if !b.insideLoop && !b.insideArgumentList {
 		b.unusedVars[name.Value] = append(b.unusedVars[name.Value], v)
 	}
 }
@@ -459,7 +466,9 @@ func (b *BlockWalker) addVar(v *expr.Variable, typ *meta.TypesMap, reason string
 
 	// Writes to variables that are done in a loop should not count as unused variables
 	// because they can be read on the next iteration (ideally we should check for that too :))
-	if !b.insideLoop {
+	// Assignments in argument lists also should not count as unused, since
+	// that is a common way to indicate what a literal argument means
+	if !b.insideLoop && !b.insideArgumentList {
 		b.unusedVars[name.Value] = append(b.unusedVars[name.Value], v)
 	}
 }
@@ -701,6 +710,10 @@ func (b *BlockWalker) handleCallArgs(n node.Node, args []node.Node, fn meta.Func
 		}
 	}
 
+	wasInsideArgumentList := b.insideArgumentList
+	b.insideArgumentList = true
+	defer func() { b.insideArgumentList = wasInsideArgumentList }()
+
 	for i, arg := range args {
 		if i >= len(fn.Params) {
 			arg.Walk(b)
@@ -892,15 +905,16 @@ func (b *BlockWalker) handleStaticCall(e *expr.StaticCall) bool {
 		return true
 	}
 
+	e.Class.Walk(b)
+	e.Call.Walk(b)
+
 	className, ok := solver.GetClassName(b.r.st, e.Class)
 	if !ok {
-		return true
+		b.handleCallArgs(e.Call, e.ArgumentList.Arguments, meta.FuncInfo{})
+		return false
 	}
 
 	fn, implClass, ok := solver.FindMethod(className, methodName)
-
-	e.Class.Walk(b)
-	e.Call.Walk(b)
 
 	if !ok && !haveMagicMethod(className, `__callStatic`) && !b.r.st.IsTrait {
 		b.r.Report(e.Call, LevelError, "undefined", "Call to undefined method %s::%s()", className, methodName)
@@ -1129,17 +1143,21 @@ func (b *BlockWalker) handleNew(e *expr.New) bool {
 		return true
 	}
 
+	if e.ArgumentList != nil {
+		b.handleCallArgs(e, e.ArgumentList.Arguments, meta.FuncInfo{})
+	}
+
 	className, ok := solver.GetClassName(b.r.st, e.Class)
 	if !ok {
 		// perhaps something like 'new $class', cannot check this.
-		return true
+		return false
 	}
 
 	if _, ok := meta.Info.GetClass(className); !ok {
 		b.r.Report(e.Class, LevelError, "undefined", "Class not found %s", className)
 	}
 
-	return true
+	return false
 }
 
 func (b *BlockWalker) handleForeach(s *stmt.Foreach) bool {
