@@ -466,7 +466,9 @@ func (b *BlockWalker) addVar(v *expr.Variable, typ *meta.TypesMap, reason string
 
 	// Writes to variables that are done in a loop should not count as unused variables
 	// because they can be read on the next iteration (ideally we should check for that too :))
-	if !b.insideLoop {
+	// Assignments in argument lists also should not count as unused, since
+	// that is a common way to indicate what a literal argument means
+	if !b.insideLoop && !b.insideArgumentList {
 		b.unusedVars[name.Value] = append(b.unusedVars[name.Value], v)
 	}
 }
@@ -1139,17 +1141,21 @@ func (b *BlockWalker) handleNew(e *expr.New) bool {
 		return true
 	}
 
+	if e.ArgumentList != nil {
+		b.handleCallArgs(e, e.ArgumentList.Arguments, meta.FuncInfo{})
+	}
+
 	className, ok := solver.GetClassName(b.r.st, e.Class)
 	if !ok {
 		// perhaps something like 'new $class', cannot check this.
-		return true
+		return false
 	}
 
 	if _, ok := meta.Info.GetClass(className); !ok {
 		b.r.Report(e.Class, LevelError, "undefined", "Class not found %s", className)
 	}
 
-	return true
+	return false
 }
 
 func (b *BlockWalker) handleForeach(s *stmt.Foreach) bool {
