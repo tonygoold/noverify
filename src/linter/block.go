@@ -952,6 +952,11 @@ func (b *BlockWalker) handlePropertyFetch(e *expr.PropertyFetch) bool {
 		return false
 	}
 
+	if v, ok := e.Property.(*expr.Variable); ok {
+		b.handleVariable(v)
+		return false
+	}
+
 	id, ok := e.Property.(*node.Identifier)
 	if !ok {
 		return false
@@ -1378,7 +1383,10 @@ func (a *andWalker) EnterChildList(key string, w walker.Walkable) {}
 func (a *andWalker) LeaveChildList(key string, w walker.Walkable) {}
 
 func (b *BlockWalker) handleVariable(v *expr.Variable) bool {
-	if !b.sc.HaveVar(v) {
+	if vv, ok := v.VarName.(*expr.Variable); ok {
+		// Recurse into variable variables (e.g., "$$x")
+		b.handleVariable(vv)
+	} else if !b.sc.HaveVar(v) {
 		b.r.reportUndefinedVariable(v, b.sc.MaybeHaveVar(v))
 		b.sc.AddVar(v, meta.NewTypesMap("undefined"), "undefined", true)
 	} else if id, ok := v.VarName.(*node.Identifier); ok {
