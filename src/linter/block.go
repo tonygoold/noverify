@@ -419,6 +419,7 @@ func (b *BlockWalker) handleContinue(s *stmt.Continue) {
 }
 
 func (b *BlockWalker) addNonLocalVar(v *expr.Variable) {
+	// TODO: Call b.readIdentifierName(v.VarName)?
 	name, ok := v.VarName.(*node.Identifier)
 	if !ok {
 		return
@@ -430,6 +431,7 @@ func (b *BlockWalker) addNonLocalVar(v *expr.Variable) {
 // replaceVar must be used to track assignments to conrete var nodes if they are available
 func (b *BlockWalker) replaceVar(v *expr.Variable, typ *meta.TypesMap, reason string, alwaysDefined bool) {
 	b.sc.ReplaceVar(v, typ, reason, alwaysDefined)
+	// TODO: Call b.readIdentifierName(v.VarName)?
 	name, ok := v.VarName.(*node.Identifier)
 	if !ok {
 		return
@@ -453,6 +455,7 @@ func (b *BlockWalker) replaceVar(v *expr.Variable, typ *meta.TypesMap, reason st
 // addVar must be used to track assignments to conrete var nodes if they are available
 func (b *BlockWalker) addVar(v *expr.Variable, typ *meta.TypesMap, reason string, alwaysDefined bool) {
 	b.sc.AddVar(v, typ, reason, alwaysDefined)
+	// TODO: Call b.readIdentifierName(v.VarName)?
 	name, ok := v.VarName.(*node.Identifier)
 	if !ok {
 		return
@@ -511,8 +514,8 @@ func (b *BlockWalker) handleUnset(s *stmt.Unset) bool {
 	for _, v := range s.Vars {
 		switch v := v.(type) {
 		case *expr.Variable:
-			if id, ok := v.VarName.(*node.Identifier); ok {
-				delete(b.unusedVars, id.Value)
+			if id, ok := b.readIdentifierName(v.VarName); ok {
+				delete(b.unusedVars, id)
 			}
 			b.sc.DelVar(v, "unset")
 		case *expr.ArrayDimFetch:
@@ -531,8 +534,8 @@ func (b *BlockWalker) handleIsset(s *expr.Isset) bool {
 	for _, v := range s.Variables {
 		switch v := v.(type) {
 		case *expr.Variable:
-			if id, ok := v.VarName.(*node.Identifier); ok {
-				delete(b.unusedVars, id.Value)
+			if id, ok := b.readIdentifierName(v.VarName); ok {
+				delete(b.unusedVars, id)
 			}
 		case *expr.ArrayDimFetch:
 			b.handleIssetDimFetch(v)
@@ -549,8 +552,8 @@ func (b *BlockWalker) handleIsset(s *expr.Isset) bool {
 func (b *BlockWalker) handleEmpty(s *expr.Empty) bool {
 	switch v := s.Expr.(type) {
 	case *expr.Variable:
-		if id, ok := v.VarName.(*node.Identifier); ok {
-			delete(b.unusedVars, id.Value)
+		if id, ok := b.readIdentifierName(v.VarName); ok {
+			delete(b.unusedVars, id)
 		}
 	case *expr.ArrayDimFetch:
 		b.handleIssetDimFetch(v)
@@ -657,8 +660,8 @@ func (b *BlockWalker) handleIssetDimFetch(e *expr.ArrayDimFetch) {
 
 	switch v := e.Variable.(type) {
 	case *expr.Variable:
-		if id, ok := v.VarName.(*node.Identifier); ok {
-			delete(b.unusedVars, id.Value)
+		if id, ok := b.readIdentifierName(v.VarName); ok {
+			delete(b.unusedVars, id)
 		}
 	case *expr.ArrayDimFetch:
 		b.handleIssetDimFetch(v)
@@ -847,12 +850,8 @@ func (b *BlockWalker) handleMethodCall(e *expr.MethodCall) bool {
 		return true
 	}
 
-	var methodName string
-
-	switch id := e.Method.(type) {
-	case *node.Identifier:
-		methodName = id.Value
-	default:
+	methodName, ok := b.readIdentifierName(e.Method)
+	if !ok {
 		return true
 	}
 
@@ -896,12 +895,8 @@ func (b *BlockWalker) handleStaticCall(e *expr.StaticCall) bool {
 		return true
 	}
 
-	var methodName string
-
-	switch id := e.Call.(type) {
-	case *node.Identifier:
-		methodName = id.Value
-	default:
+	methodName, ok := b.readIdentifierName(e.Call)
+	if !ok {
 		return true
 	}
 
@@ -939,6 +934,7 @@ func (b *BlockWalker) isThisInsideClosure(varNode node.Node) bool {
 		return false
 	}
 
+	// TODO: Call b.readIdentifierName(variable.VarName)?
 	if varName, ok := variable.VarName.(*node.Identifier); ok && varName.Value == `this` {
 		return true
 	}
@@ -953,12 +949,7 @@ func (b *BlockWalker) handlePropertyFetch(e *expr.PropertyFetch) bool {
 		return false
 	}
 
-	if v, ok := e.Property.(*expr.Variable); ok {
-		b.handleVariable(v)
-		return false
-	}
-
-	id, ok := e.Property.(*node.Identifier)
+	id, ok := b.readIdentifierName(e.Property)
 	if !ok {
 		return false
 	}
@@ -973,16 +964,16 @@ func (b *BlockWalker) handlePropertyFetch(e *expr.PropertyFetch) bool {
 		if found || magic {
 			return
 		}
-		info, implClass, found = solver.FindProperty(className, id.Value)
+		info, implClass, found = solver.FindProperty(className, id)
 		magic = haveMagicMethod(className, `__get`)
 	})
 
 	if !found && !magic && !b.r.st.IsTrait && !b.isThisInsideClosure(e.Variable) {
-		b.r.Report(e.Property, LevelError, "undefined", "Property {%s}->%s does not exist", typ, id.Value)
+		b.r.Report(e.Property, LevelError, "undefined", "Property {%s}->%s does not exist", typ, id)
 	}
 
 	if found && !b.canAccess(implClass, info.AccessLevel) {
-		b.r.Report(e.Property, LevelError, "accessLevel", "Cannot access %s property %s->%s", info.AccessLevel, implClass, id.Value)
+		b.r.Report(e.Property, LevelError, "accessLevel", "Cannot access %s property %s->%s", info.AccessLevel, implClass, id)
 	}
 
 	return false
@@ -1000,7 +991,7 @@ func (b *BlockWalker) handleStaticPropertyFetch(e *expr.StaticPropertyFetch) boo
 		return false
 	}
 
-	varName, ok := varExpr.VarName.(*node.Identifier)
+	varName, ok := b.readIdentifierName(varExpr.VarName)
 	if !ok {
 		return false
 	}
@@ -1010,13 +1001,13 @@ func (b *BlockWalker) handleStaticPropertyFetch(e *expr.StaticPropertyFetch) boo
 		return false
 	}
 
-	info, implClass, ok := solver.FindProperty(className, "$"+varName.Value)
+	info, implClass, ok := solver.FindProperty(className, "$"+varName)
 	if !ok && !b.r.st.IsTrait {
-		b.r.Report(e.Property, LevelError, "undefined", "Property %s::$%s does not exist", className, varName.Value)
+		b.r.Report(e.Property, LevelError, "undefined", "Property %s::$%s does not exist", className, varName)
 	}
 
 	if ok && !b.canAccess(implClass, info.AccessLevel) {
-		b.r.Report(e.Property, LevelError, "accessLevel", "Cannot access %s property %s::$%s", info.AccessLevel, implClass, varName.Value)
+		b.r.Report(e.Property, LevelError, "accessLevel", "Cannot access %s property %s::$%s", info.AccessLevel, implClass, varName)
 	}
 
 	return false
@@ -1088,6 +1079,7 @@ func (b *BlockWalker) handleClassConstFetch(e *expr.ClassConstFetch) bool {
 		return true
 	}
 
+	// TODO: Call b.readIdentifierName(e.ConstantName)?
 	constName, ok := e.ConstantName.(*node.Identifier)
 	if !ok {
 		return false
@@ -1327,6 +1319,18 @@ func (b *BlockWalker) handleDo(s *stmt.Do) bool {
 	return false
 }
 
+// readIdentifierName returns the identifier name from a node if it is a
+// literal identifier. Variable identifiers (e.g., $$x or $x->$y) are walked
+// but the empty string is returned for the identifier name.
+func (b *BlockWalker) readIdentifierName(n node.Node) (string, bool) {
+	if id, ok := n.(*node.Identifier); ok {
+		return id.Value, true
+	}
+
+	n.Walk(b)
+	return "", false
+}
+
 // propagateFlags is like propagateFlagsFromBranches, but for a simple single block case.
 func (b *BlockWalker) propagateFlags(other *BlockWalker) {
 	b.containsExitFlags |= other.containsExitFlags
@@ -1384,14 +1388,16 @@ func (a *andWalker) EnterChildList(key string, w walker.Walkable) {}
 func (a *andWalker) LeaveChildList(key string, w walker.Walkable) {}
 
 func (b *BlockWalker) handleVariable(v *expr.Variable) bool {
-	if vv, ok := v.VarName.(*expr.Variable); ok {
-		// Recurse into variable variables (e.g., "$$x")
-		b.handleVariable(vv)
-	} else if !b.sc.HaveVar(v) {
+	id, ok := b.readIdentifierName(v.VarName)
+	if !ok {
+		return false
+	}
+
+	if !b.sc.HaveVar(v) {
 		b.r.reportUndefinedVariable(v, b.sc.MaybeHaveVar(v))
 		b.sc.AddVar(v, meta.NewTypesMap("undefined"), "undefined", true)
-	} else if id, ok := v.VarName.(*node.Identifier); ok {
-		delete(b.unusedVars, id.Value)
+	} else {
+		delete(b.unusedVars, id)
 	}
 	return false
 }
@@ -1415,12 +1421,13 @@ func (b *BlockWalker) handleIf(s *stmt.If) bool {
 						b.addVar(v, meta.NewTypesMap("isset_$"+vn.Value), "isset", true)
 						defer b.sc.DelVar(v, "isset")
 					case *expr.Variable:
+						// b.handleVariable(vn) AND b.readIdentifierName(vn.VarName)? Should be one or the other -- did I add both?
 						b.handleVariable(vn)
-						name, ok := vn.VarName.(*node.Identifier)
+						name, ok := b.readIdentifierName(vn.VarName)
 						if !ok {
 							continue
 						}
-						b.addVar(v, meta.NewTypesMap("isset_$$"+name.Value), "isset", true)
+						b.addVar(v, meta.NewTypesMap("isset_$$"+name), "isset", true)
 						defer b.sc.DelVar(v, "isset")
 					}
 				}
@@ -1727,6 +1734,10 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 		b.handleDimFetchLValue(v, "assign_array", typ)
 		return false
 	case *expr.Variable:
+		// Check for variable accesses within variable nodes (e.g., "$$x")
+		if vv, ok := v.VarName.(*expr.Variable); ok {
+			b.handleVariable(vv)
+		}
 		b.replaceVar(v, solver.ExprTypeLocal(b.sc, b.r.st, a.Expression), "assign", true)
 	case *expr.List:
 		b.handleAssignList(v.Items)
@@ -1739,14 +1750,22 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 			break
 		}
 
-		id, ok := varNode.VarName.(*node.Identifier)
+		// TODO: Make sure variable and property are both read, to ensure
+		// variable variable references are correctly walked
+
+		id, ok := b.readIdentifierName(varNode.VarName)
 		if !ok {
 			break
 		}
 
-		delete(b.unusedVars, id.Value)
+		delete(b.unusedVars, id)
 
-		if id.Value != "this" {
+		propertyName, ok := b.readIdentifierName(v.Property)
+		if !ok {
+			break
+		}
+
+		if id != "this" {
 			break
 		}
 
@@ -1754,16 +1773,11 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 			break
 		}
 
-		propertyName, ok := v.Property.(*node.Identifier)
-		if !ok {
-			break
-		}
-
 		cls := b.r.getClass()
 
-		p := cls.Properties[propertyName.Value]
+		p := cls.Properties[propertyName]
 		p.Typ = p.Typ.Append(solver.ExprTypeLocalCustom(b.sc, b.r.st, a.Expression, b.customTypes))
-		cls.Properties[propertyName.Value] = p
+		cls.Properties[propertyName] = p
 	case *expr.StaticPropertyFetch:
 		if b.r.st.CurrentClass == "" {
 			break
@@ -1779,16 +1793,16 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 			break
 		}
 
-		id, ok := varNode.VarName.(*node.Identifier)
+		id, ok := b.readIdentifierName(varNode.VarName)
 		if !ok {
 			break
 		}
 
 		cls := b.r.getClass()
 
-		p := cls.Properties["$"+id.Value]
+		p := cls.Properties["$"+id]
 		p.Typ = p.Typ.Append(solver.ExprTypeLocalCustom(b.sc, b.r.st, a.Expression, b.customTypes))
-		cls.Properties["$"+id.Value] = p
+		cls.Properties["$"+id] = p
 	default:
 		a.Variable.Walk(b)
 	}
@@ -1824,13 +1838,14 @@ func (b *BlockWalker) flushUnused() {
 }
 
 func (b *BlockWalker) handleVariableNode(n node.Node, typ *meta.TypesMap, what string) {
-	if n == nil {
-		return
-	}
-
 	vv, ok := n.(*expr.Variable)
 	if !ok {
 		return
+	}
+
+	// Check for variable accesses within variable nodes (e.g., "$$x")
+	if inner, ok := vv.VarName.(*expr.Variable); ok {
+		b.handleVariable(inner)
 	}
 
 	b.addVar(vv, typ, what, true)
