@@ -710,8 +710,9 @@ func (b *BlockWalker) handleCallArgs(n node.Node, args []node.Node, fn meta.Func
 		}
 	}
 
+	wasInsideArgumentList := b.insideArgumentList
 	b.insideArgumentList = true
-	defer func() { b.insideArgumentList = false }()
+	defer func() { b.insideArgumentList = wasInsideArgumentList }()
 
 	for i, arg := range args {
 		if i >= len(fn.Params) {
