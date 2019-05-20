@@ -744,6 +744,7 @@ func (b *BlockWalker) handleCallArgs(n node.Node, args []node.Node, fn meta.Func
 
 func (b *BlockWalker) handleFunctionCall(e *expr.FunctionCall) bool {
 	var fn meta.FuncInfo
+	var fqName string
 
 	if meta.IsIndexingComplete() {
 		defined := true
@@ -760,16 +761,20 @@ func (b *BlockWalker) handleFunctionCall(e *expr.FunctionCall) bool {
 					// handle situations like 'use NS\Foo; Foo\Bar::doSomething();'
 					nameStr = alias + `\` + meta.NamePartsToString(nm.Parts[1:])
 				}
-				fn, defined = meta.Info.GetFunction(nameStr)
+				fqName = nameStr
+				fn, defined = meta.Info.GetFunction(fqName)
 			} else {
-				fn, defined = meta.Info.GetFunction(b.r.st.Namespace + `\` + nameStr)
+				fqName = b.r.st.Namespace + `\` + nameStr
+				fn, defined = meta.Info.GetFunction(fqName)
 				if !defined && b.r.st.Namespace != "" {
-					fn, defined = meta.Info.GetFunction(`\` + nameStr)
+					fqName = `\` + nameStr
+					fn, defined = meta.Info.GetFunction(fqName)
 				}
 			}
 
 		case *name.FullyQualified:
-			fn, defined = meta.Info.GetFunction(meta.FullyQualifiedToString(nm))
+			fqName = meta.FullyQualifiedToString(nm)
+			fn, defined = meta.Info.GetFunction(fqName)
 		default:
 			defined = false
 
@@ -796,10 +801,28 @@ func (b *BlockWalker) handleFunctionCall(e *expr.FunctionCall) bool {
 
 	e.Function.Walk(b)
 
-	b.handleCallArgs(e.Function, e.ArgumentList.Arguments, fn)
+	if fqName == `\compact` {
+		b.handleCompactCallArgs(e.Function, e.ArgumentList.Arguments, fn)
+	} else {
+		b.handleCallArgs(e.Function, e.ArgumentList.Arguments, fn)
+	}
 	b.exitFlags |= fn.ExitFlags
 
 	return false
+}
+
+func (b *BlockWalker) handleCompactCallArgs(n node.Node, args []node.Node, fn meta.FuncInfo) {
+	// compact('a', 'b') is equivalent to ['a' => $a, 'b' => $b]
+	for _, arg := range args {
+		a := arg.(*node.Argument)
+		if s, ok := a.Expr.(*scalar.String); ok {
+			id := node.NewIdentifier(unquote(s.Value))
+			id.SetPosition(arg.GetPosition())
+			v := expr.NewVariable(id)
+			v.SetPosition(arg.GetPosition())
+			b.handleVariable(v)
+		}
+	}
 }
 
 // checks whether or not we can access to className::method/property/constant/etc from this context
