@@ -81,6 +81,9 @@ type BlockWalker struct {
 	unusedVars   map[string][]node.Node
 	nonLocalVars map[string]struct{} // static, global and other vars that have complex control flow
 
+	// Suppress unused warnings resulting from the current statement
+	ignoreStatementUnused bool
+
 	// inferred return types if any
 	returnTypes *meta.TypesMap
 
@@ -161,14 +164,15 @@ func (b *BlockWalker) addStatement(n node.Node) {
 
 func (b *BlockWalker) copy() *BlockWalker {
 	bCopy := &BlockWalker{
-		sc:                   b.sc.Clone(),
-		r:                    b.r,
-		innermostLoop:        b.innermostLoop,
-		insideLoop:           b.insideLoop,
-		insideArgumentList:   b.insideArgumentList,
-		unusedVars:           b.unusedVars,
-		nonLocalVars:         b.nonLocalVars,
-		ignoreFunctionBodies: b.ignoreFunctionBodies,
+		sc:                    b.sc.Clone(),
+		r:                     b.r,
+		innermostLoop:         b.innermostLoop,
+		insideLoop:            b.insideLoop,
+		insideArgumentList:    b.insideArgumentList,
+		unusedVars:            b.unusedVars,
+		nonLocalVars:          b.nonLocalVars,
+		ignoreStatementUnused: b.ignoreStatementUnused,
+		ignoreFunctionBodies:  b.ignoreFunctionBodies,
 	}
 	for _, createFn := range b.r.customBlock {
 		bCopy.custom = append(bCopy.custom, createFn(&BlockContext{w: bCopy}))
@@ -251,12 +255,28 @@ func (b *BlockWalker) EnterNode(w walker.Walkable) (res bool) {
 		b.reportDeadCode(n)
 	}
 
+	var pragmas []string
 	if ffs := n.GetFreeFloating(); ffs != nil {
 		for _, cs := range *ffs {
 			for _, c := range cs {
 				b.parseComment(c)
+				pragmas = append(pragmas, b.parseLinterPragmas(c)...)
 			}
 		}
+	}
+
+	ignoreStatementUnused := false
+	for _, p := range pragmas {
+		if p == "unused" {
+			ignoreStatementUnused = true
+		}
+	}
+	if ignoreStatementUnused && !b.ignoreStatementUnused {
+		// Re-walk the current node with the flag set
+		b.ignoreStatementUnused = true
+		w.Walk(b)
+		b.ignoreStatementUnused = false
+		return false
 	}
 
 	switch s := w.(type) {
@@ -445,7 +465,7 @@ func (b *BlockWalker) replaceVar(v *expr.Variable, typ *meta.TypesMap, reason st
 	// because they can be read on the next iteration (ideally we should check for that too :))
 	// Assignments in argument lists also should not count as unused, since
 	// that is a common way to indicate what a literal argument means
-	if !b.insideLoop && !b.insideArgumentList {
+	if !b.insideLoop && !b.insideArgumentList && !b.ignoreStatementUnused {
 		b.unusedVars[name.Value] = append(b.unusedVars[name.Value], v)
 	}
 }
@@ -468,7 +488,7 @@ func (b *BlockWalker) addVar(v *expr.Variable, typ *meta.TypesMap, reason string
 	// because they can be read on the next iteration (ideally we should check for that too :))
 	// Assignments in argument lists also should not count as unused, since
 	// that is a common way to indicate what a literal argument means
-	if !b.insideLoop && !b.insideArgumentList {
+	if !b.insideLoop && !b.insideArgumentList && !b.ignoreStatementUnused {
 		b.unusedVars[name.Value] = append(b.unusedVars[name.Value], v)
 	}
 }
@@ -505,6 +525,20 @@ func (b *BlockWalker) parseComment(c freefloating.String) {
 		m := meta.NewTypesMap(b.r.maybeAddNamespace(typ))
 		b.sc.AddVarFromPHPDoc(strings.TrimPrefix(varName, "$"), m, "@var")
 	}
+}
+
+func (b *BlockWalker) parseLinterPragmas(c freefloating.String) []string {
+	if c.StringType != freefloating.CommentType {
+		return nil
+	}
+
+	var ps []string
+	for _, m := range linterPragmaRegex.FindAllStringSubmatch(c.Value, -1) {
+		if m[1] == "ignore" {
+			ps = append(ps, m[2])
+		}
+	}
+	return ps
 }
 
 func (b *BlockWalker) handleUnset(s *stmt.Unset) bool {
@@ -1905,6 +1939,12 @@ var fallthroughMarkerRegex = func() *regexp.Regexp {
 	}
 
 	pattern := `(?:/\*|//)\s?(?:` + strings.Join(markers, `|`) + `)`
+	return regexp.MustCompile(pattern)
+}()
+
+var linterPragmaRegex = func() *regexp.Regexp {
+	// Only currently supported pragma is "@linter ignore unused"
+	pattern := `@linter[:\s]\s*(ignore)\s+(\w+)`
 	return regexp.MustCompile(pattern)
 }()
 
