@@ -1376,6 +1376,15 @@ func (b *BlockWalker) handleDo(s *stmt.Do) bool {
 
 	if s.Cond != nil {
 		s.Cond.Walk(b)
+		// Check whether repeating the "do" block would clear any variables
+		// marked unused as a result of the "while" block
+		if s.Stmt != nil {
+			vw := &VariableWalker{}
+			s.Stmt.Walk(vw)
+			for _, nm := range vw.Reads() {
+				delete(b.unusedVars, nm)
+			}
+		}
 	}
 
 	return false
