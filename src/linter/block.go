@@ -660,6 +660,19 @@ func (b *BlockWalker) handleTry(s *stmt.Try) bool {
 
 	b.containsExitFlags |= tryB.containsExitFlags
 
+	// Check for variables assigned in the try block that are read in a catch
+	// or finally block
+	vw := &VariableWalker{}
+	for _, c := range s.Catches {
+		c.Walk(vw)
+	}
+	if s.Finally != nil {
+		s.Finally.Walk(vw)
+	}
+	for _, nm := range vw.Reads() {
+		delete(b.unusedVars, nm)
+	}
+
 	return false
 }
 
