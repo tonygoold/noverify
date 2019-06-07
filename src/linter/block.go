@@ -1764,13 +1764,21 @@ func (b *BlockWalker) handleDimFetchLValue(e *expr.ArrayDimFetch, reason string,
 
 // some day, perhaps, there will be some difference between handleAssignReference and handleAssign
 func (b *BlockWalker) handleAssignReference(a *assign.Reference) bool {
+	// Given $a = &$b, tracking whether assignments to either are used is
+	// very difficult, so it's easier to treat them both as non-local
+	if expVar, ok := a.Expression.(*expr.Variable); ok {
+		b.addNonLocalVar(expVar)
+	}
+
 	switch v := a.Variable.(type) {
 	case *expr.ArrayDimFetch:
 		b.handleDimFetchLValue(v, "assign_array", meta.NewTypesMap("array"))
-		a.Expression.Walk(b)
-		return false
+		if arrVar, ok := v.Variable.(*expr.Variable); ok {
+			b.addNonLocalVar(arrVar)
+		}
 	case *expr.Variable:
 		b.addVar(v, solver.ExprTypeLocal(b.sc, b.r.st, a.Expression), "assign", true)
+		b.addNonLocalVar(v)
 	case *expr.List:
 		for _, item := range v.Items {
 			arrayItem, ok := item.(*expr.ArrayItem)
@@ -1779,6 +1787,9 @@ func (b *BlockWalker) handleAssignReference(a *assign.Reference) bool {
 			}
 
 			b.handleVariableNode(arrayItem.Val, meta.NewTypesMap("unknown_from_list"), "assign")
+			if itemVar, ok := arrayItem.Val.(*expr.Variable); ok {
+				b.addNonLocalVar(itemVar)
+			}
 		}
 	default:
 		a.Variable.Walk(b)
