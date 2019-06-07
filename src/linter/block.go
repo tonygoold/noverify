@@ -1069,6 +1069,7 @@ func (b *BlockWalker) handleStaticPropertyFetch(e *expr.StaticPropertyFetch) boo
 
 	varName, ok := varExpr.VarName.(*node.Identifier)
 	if !ok {
+		varExpr.VarName.Walk(b)
 		return false
 	}
 
