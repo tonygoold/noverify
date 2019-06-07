@@ -1221,8 +1221,11 @@ func (b *BlockWalker) handleNew(e *expr.New) bool {
 
 	className, ok := solver.GetClassName(b.r.st, e.Class)
 	if !ok {
-		// perhaps something like 'new $class'
-		e.Class.Walk(b)
+		// perhaps something like 'new $class', which should be walked, but
+		// could also be an inline class declaration, which isn't handled yet
+		if _, ok := e.Class.(*stmt.Class); !ok {
+			e.Class.Walk(b)
+		}
 		return false
 	}
 
