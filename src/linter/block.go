@@ -1019,6 +1019,7 @@ func (b *BlockWalker) isThisInsideClosure(varNode node.Node) bool {
 
 func (b *BlockWalker) handlePropertyFetch(e *expr.PropertyFetch) bool {
 	e.Variable.Walk(b)
+	e.Property.Walk(b)
 
 	if !meta.IsIndexingComplete() {
 		return false
