@@ -1812,11 +1812,17 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 		varNode, ok := v.Variable.(*expr.Variable)
 		if !ok {
 			v.Variable.Walk(b)
+			v.Property.Walk(b)
 			break
 		}
 
+		// Check for sub-expressions in the property name
+		v.Property.Walk(b)
+
 		id, ok := varNode.VarName.(*node.Identifier)
 		if !ok {
+			// Check for sub-expressions in the variable name
+			varNode.VarName.Walk(b)
 			break
 		}
 
@@ -1841,15 +1847,6 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 		p.Typ = p.Typ.Append(solver.ExprTypeLocalCustom(b.sc, b.r.st, a.Expression, b.customTypes))
 		cls.Properties[propertyName.Value] = p
 	case *expr.StaticPropertyFetch:
-		if b.r.st.CurrentClass == "" {
-			break
-		}
-
-		className, ok := solver.GetClassName(b.r.st, v.Class)
-		if !ok || className != b.r.st.CurrentClass {
-			break
-		}
-
 		varNode, ok := v.Property.(*expr.Variable)
 		if !ok {
 			break
@@ -1857,6 +1854,17 @@ func (b *BlockWalker) handleAssign(a *assign.Assign) bool {
 
 		id, ok := varNode.VarName.(*node.Identifier)
 		if !ok {
+			// Check for sub-expressions in the property name
+			varNode.VarName.Walk(b)
+			break
+		}
+
+		if b.r.st.CurrentClass == "" {
+			break
+		}
+
+		className, ok := solver.GetClassName(b.r.st, v.Class)
+		if !ok || className != b.r.st.CurrentClass {
 			break
 		}
 
